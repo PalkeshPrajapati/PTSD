@@ -13,13 +13,33 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 
 # ============================================================
-# HEART RATE DATA SOURCE
-# Switch between dummy (simulated) and real hardware sensor
-# Options: "DUMMY" or "SERIAL"
+# PHYSIOLOGICAL SENSOR SOURCES (per-sensor toggle)
+# Each sensor can be:
+#   "DUMMY"  → Simulated data (for testing without hardware)
+#   "SERIAL" → Real data from ESP32 hardware
+#   "AUTO"   → Calculated from other sensors (HRV from HR, temp from MAX30102)
+#   "NEUTRAL"→ Fixed neutral value (doesn't affect risk score)
 # ============================================================
-HEART_RATE_SOURCE = "DUMMY"
+SENSOR_SOURCES = {
+    "heart_rate": "DUMMY",    # MAX30102 sensor — change to "SERIAL" when connected
+    "gsr":        "DUMMY",    # GSR module — change to "SERIAL" when connected
+    "hrv":        "AUTO",     # Calculated from HR intervals (no extra hardware needed)
+    "skin_temp":  "AUTO",     # MAX30102 built-in temp sensor (auto when HR is SERIAL)
+}
 
-# Serial port settings (used when HEART_RATE_SOURCE = "SERIAL")
+# Backward compatibility — overall mode for the stress classifier
+# "DUMMY" if ALL sensors are dummy, "SERIAL" if ANY sensor is serial
+HEART_RATE_SOURCE = "SERIAL" if "SERIAL" in SENSOR_SOURCES.values() else "DUMMY"
+
+# Neutral fallback values (used when a sensor is set to "NEUTRAL")
+NEUTRAL_VALUES = {
+    "heart_rate": 72.0,   # Normal resting HR
+    "gsr": 3.0,           # Normal resting GSR
+    "hrv": 50.0,          # Normal HRV
+    "skin_temp": 34.0,    # Normal skin temperature
+}
+
+# Serial port settings (used when any sensor is "SERIAL")
 SERIAL_PORT = "COM3"  # Change to your ESP32 port
 SERIAL_BAUD_RATE = 115200
 
@@ -74,7 +94,7 @@ TRIGGER_SOUNDS = [
 
 # Audio recording settings
 AUDIO_SAMPLE_RATE = 16000  # YAMNet expects 16kHz
-AUDIO_DURATION = 1.0  # Seconds of audio per classification
+AUDIO_DURATION = 0.5  # Seconds of audio per classification
 
 # ============================================================
 # STRESS / HEART RATE
@@ -106,5 +126,5 @@ RISK_HIGH = 100     # 61-100% = High risk
 # ============================================================
 # DASHBOARD
 # ============================================================
-DASHBOARD_REFRESH_RATE = 2  # Seconds between dashboard updates
+DASHBOARD_REFRESH_RATE = 0.5  # Seconds between dashboard updates
 MAX_HISTORY_ITEMS = 100     # Max trigger events to keep in memory

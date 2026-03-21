@@ -17,7 +17,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.utils.config import HEART_RATE_SOURCE, MODELS_DIR
+from src.utils.config import HEART_RATE_SOURCE, SENSOR_SOURCES, MODELS_DIR
 from src.utils.logger import setup_logger
 
 logger = setup_logger("StressClassifier")
@@ -38,6 +38,7 @@ class StressClassifier:
     """
     Predicts stress level from physiological signals.
     Uses Random Forest trained on dummy/real sensor data.
+    Supports per-sensor source selection (DUMMY/SERIAL/AUTO/NEUTRAL).
     """
 
     def __init__(self):
@@ -46,28 +47,31 @@ class StressClassifier:
         self.is_trained = False
         self.sensor_stream = None
 
-        # Set up data source based on config
+        # Set up data source based on per-sensor config
         self._setup_data_source()
 
         # Try to load pre-trained model
         self._load_model()
 
-        logger.info(f"StressClassifier initialized (source: {HEART_RATE_SOURCE})")
+        logger.info(f"StressClassifier initialized (mode: {HEART_RATE_SOURCE})")
+        logger.info(f"  Sensor sources: {SENSOR_SOURCES}")
 
     def _setup_data_source(self):
-        """Set up the sensor data source (dummy or real hardware)."""
-        if HEART_RATE_SOURCE == "DUMMY":
-            from src.stress.dummy_data import DummySensorStream
-            self.sensor_stream = DummySensorStream()
-            logger.info("Using DUMMY sensor data")
-        elif HEART_RATE_SOURCE == "SERIAL":
+        """
+        Set up the sensor data source.
+        Uses hybrid SerialSensorStream if ANY sensor is SERIAL,
+        otherwise uses DummySensorStream.
+        """
+        has_serial = any(v == "SERIAL" for v in SENSOR_SOURCES.values())
+
+        if has_serial:
             from src.stress.serial_reader import SerialSensorStream
             self.sensor_stream = SerialSensorStream()
-            logger.info("Using SERIAL (hardware) sensor data")
+            logger.info("Using HYBRID sensor stream (mix of real + simulated)")
         else:
-            logger.warning(f"Unknown source: {HEART_RATE_SOURCE}, falling back to DUMMY")
             from src.stress.dummy_data import DummySensorStream
             self.sensor_stream = DummySensorStream()
+            logger.info("Using DUMMY sensor data (all simulated)")
 
     def train(self, csv_path: str = None, n_samples: int = 3000):
         """

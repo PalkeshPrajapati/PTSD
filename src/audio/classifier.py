@@ -90,7 +90,22 @@ class AudioClassifier:
         if self.model is None:
             logger.info("Loading YAMNet model from TensorFlow Hub (first time downloads ~200MB)...")
             import tensorflow_hub as hub
-            self.model = hub.load("https://tfhub.dev/google/yamnet/1")
+
+            yamnet_url = "https://tfhub.dev/google/yamnet/1"
+
+            try:
+                self.model = hub.load(yamnet_url)
+            except (ValueError, OSError) as e:
+                # Corrupted cache — clear and retry
+                logger.warning(f"Model cache corrupted: {e}")
+                logger.info("Clearing TF Hub cache and re-downloading...")
+                import shutil
+                import tempfile
+                cache_dir = os.path.join(tempfile.gettempdir(), "tfhub_modules")
+                if os.path.exists(cache_dir):
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                    logger.info(f"Cleared cache: {cache_dir}")
+                self.model = hub.load(yamnet_url)
 
             # Load class names
             import csv
