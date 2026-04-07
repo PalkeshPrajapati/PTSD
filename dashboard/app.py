@@ -253,6 +253,7 @@ st.markdown("""
     }
     .log-risk  { border-left: 2px solid #ef4444; }
     .log-audio { border-left: 2px solid #a78bfa; }
+    .log-gesture { border-left: 2px solid #2dd4bf; }
     .log-time {
         font-family: 'DM Mono', monospace;
         color: #5a6278;
@@ -330,12 +331,14 @@ def init_session_state():
         "object_score": 0.0,
         "audio_score": 0.0,
         "stress_score": 0.0,
+        "gesture_score": 0.0,
         "heart_rate": 70.0,
         "gsr": 3.0,
         "stress_level": "calm",
         "dominant_emotion": "neutral",
         "detected_objects": [],
         "detected_sounds": [],
+        "detected_gestures": [],
         "top_sounds": [],
         "audio_volume": 0.0,
         "trigger_log": deque(maxlen=50),
@@ -459,6 +462,7 @@ def run_detection_cycle():
     from src.object_detection.detector import ObjectDetector
     from src.stress.classifier import StressClassifier
     from src.audio.classifier import AudioClassifier
+    from src.gesture.detector import GestureDetector
 
     if "emotion_det" not in st.session_state:
         st.session_state.emotion_det = EmotionDetector()
@@ -468,6 +472,8 @@ def run_detection_cycle():
         st.session_state.stress_clf = StressClassifier()
     if "audio_clf" not in st.session_state:
         st.session_state.audio_clf = AudioClassifier()
+    if "gesture_det" not in st.session_state:
+        st.session_state.gesture_det = GestureDetector()
 
     # Keep webcam open in session state (opening camera is slow ~200-500ms)
     if "webcam" not in st.session_state or not st.session_state.webcam.isOpened():
@@ -521,13 +527,21 @@ def run_detection_cycle():
     st.session_state.gsr = stress_res["reading"].get("gsr", 3)
     st.session_state.stress_level = stress_res["stress_level"]
 
-    # Fused risk
+    # Gesture — runs on same webcam frame (no extra camera needed)
+    gesture_results = st.session_state.gesture_det.detect_frame(frame)
+    st.session_state.gesture_score = gesture_results["trigger_score"]
+    st.session_state.detected_gestures = [
+        g["name"] for g in gesture_results.get("gestures", [])
+    ]
+
+    # Fused risk (5 modules)
     w = FUSION_WEIGHTS
     total = (
         st.session_state.emotion_score * w["emotion"]
         + st.session_state.object_score * w["object"]
         + st.session_state.audio_score * w["audio"]
         + st.session_state.stress_score * w["stress"]
+        + st.session_state.gesture_score * w.get("gesture", 0)
     )
     st.session_state.overall_risk = round(min(max(total, 0), 100), 1)
     st.session_state.risk_level = (
@@ -552,9 +566,16 @@ def run_detection_cycle():
             "time": now,
             "text": f"Sound trigger: {s}",
         })
+    for g in st.session_state.detected_gestures:
+        st.session_state.trigger_log.appendleft({
+            "type": "gesture",
+            "time": now,
+            "text": f"Gesture: {g}",
+        })
 
     annotated = st.session_state.emotion_det.draw_results(frame, emo_results)
     annotated = st.session_state.object_det.draw_results(annotated, obj_results)
+    annotated = st.session_state.gesture_det.draw_results(annotated, gesture_results)
     _, buf = cv2.imencode(".jpg", annotated)
     st.session_state.frame_bytes = buf.tobytes()
 
@@ -783,8 +804,8 @@ if st.session_state.trigger_log:
     log_items = list(st.session_state.trigger_log)[:10]
     cols = st.columns(2)
     for i, event in enumerate(log_items):
-        cls = "log-audio" if event["type"] == "audio" else "log-risk"
-        icon = "🔊" if event["type"] == "audio" else "⚠️"
+        cls = "log-gesture" if event["type"] == "gesture" else "log-audio" if event["type"] == "audio" else "log-risk"
+        icon = "🤜" if event["type"] == "gesture" else "🔊" if event["type"] == "audio" else "⚠️"
         with cols[i % 2]:
             st.markdown(f"""
             <div class="log-item {cls}">

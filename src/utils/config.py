@@ -110,12 +110,13 @@ STRESS_HR_CRITICAL = 130   # HR above this = high stress
 # ============================================================
 # RISK FUSION
 # ============================================================
-# Weights for each module in the final risk score
+# Weights for each module in the final risk score (must sum to 1.0)
 FUSION_WEIGHTS = {
-    "emotion": 0.30,   # 30% weight
-    "object": 0.20,    # 20% weight
-    "audio": 0.25,     # 25% weight
-    "stress": 0.25,    # 25% weight
+    "emotion": 0.25,   # 25% — facial emotion (DeepFace)
+    "object": 0.15,    # 15% — trigger objects (YOLO26)
+    "audio": 0.20,     # 20% — trigger sounds (YAMNet)
+    "stress": 0.20,    # 20% — physiological stress (Random Forest)
+    "gesture": 0.20,   # 20% — body gesture/posture (MediaPipe)
 }
 
 # Risk levels
@@ -126,5 +127,5 @@ RISK_HIGH = 100     # 61-100% = High risk
 # ============================================================
 # DASHBOARD
 # ============================================================
-DASHBOARD_REFRESH_RATE = 0.5  # Seconds between dashboard updates
+DASHBOARD_REFRESH_RATE = 0.01  # Seconds between dashboard updates
 MAX_HISTORY_ITEMS = 100     # Max trigger events to keep in memory
