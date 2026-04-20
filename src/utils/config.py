@@ -21,10 +21,10 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 #   "NEUTRAL"→ Fixed neutral value (doesn't affect risk score)
 # ============================================================
 SENSOR_SOURCES = {
-    "heart_rate": "DUMMY",    # MAX30102 sensor — change to "SERIAL" when connected
-    "gsr":        "DUMMY",    # GSR module — change to "SERIAL" when connected
-    "hrv":        "AUTO",     # Calculated from HR intervals (no extra hardware needed)
-    "skin_temp":  "AUTO",     # MAX30102 built-in temp sensor (auto when HR is SERIAL)
+    "heart_rate": "SERIAL",   # AD8232 ECG sensor via ESP32
+    "gsr":        "NEUTRAL",  # No GSR hardware yet — uses neutral value
+    "hrv":        "AUTO",     # Calculated from ECG R-R intervals by ESP32
+    "skin_temp":  "NEUTRAL",  # No temp sensor — uses neutral value
 }
 
 # Backward compatibility — overall mode for the stress classifier
@@ -40,7 +40,7 @@ NEUTRAL_VALUES = {
 }
 
 # Serial port settings (used when any sensor is "SERIAL")
-SERIAL_PORT = "COM3"  # Change to your ESP32 port
+SERIAL_PORT = "COM15"  # Your ESP32 port
 SERIAL_BAUD_RATE = 115200
 
 # ============================================================

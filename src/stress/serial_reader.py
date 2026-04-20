@@ -2,14 +2,13 @@
 Serial Sensor Reader for PTSD Trigger Detection System
 
 Reads real physiological data from hardware sensors via serial port.
-Hardware: MAX30102 (HR + temperature) + GSR module + ESP32 microcontroller
+Hardware: AD8232 ECG sensor + ESP32 microcontroller
 
-Supports HYBRID mode: some sensors real, some dummy/neutral.
+Supports HYBRID mode: some sensors real, some neutral.
 Controlled by SENSOR_SOURCES in config.py.
 
 Expected serial data format from ESP32 (JSON):
-    {"heart_rate": 75.2, "gsr": 3.5, "skin_temp": 34.1}
-    (HRV is calculated automatically from HR intervals)
+    {"heart_rate": 75.2, "hrv": 32.5, "ecg_raw": 2450, "leads_off": false}
 """
 
 import sys
@@ -76,13 +75,31 @@ class SerialSensorStream:
             logger.info("Serial sensors will use neutral fallback values.")
 
     def _read_serial(self) -> dict:
-        """Read one JSON line from serial port."""
+        """Read the LATEST JSON line from serial port (drains buffer)."""
         if self.serial_conn is None or not self.serial_conn.is_open:
             return {}
         try:
-            line = self.serial_conn.readline().decode("utf-8").strip()
-            if line:
-                return json.loads(line)
+            latest = None
+            # Drain buffer — read all available lines, keep the last one
+            while self.serial_conn.in_waiting > 0:
+                line = self.serial_conn.readline().decode("utf-8").strip()
+                if line and line.startswith("{"):
+                    latest = line
+
+            # If nothing was waiting, do one blocking read
+            if latest is None:
+                line = self.serial_conn.readline().decode("utf-8").strip()
+                if line and line.startswith("{"):
+                    latest = line
+
+            if latest:
+                data = json.loads(latest)
+                if data.get("leads_off", False):
+                    logger.debug("ECG leads off — using neutral values")
+                    return {"leads_off": True}
+                logger.info(f"ECG: HR={data.get('heart_rate', 0):.1f} bpm, HRV={data.get('hrv', 0):.1f}")
+                return data
+
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.debug(f"Serial parse error: {e}")
         except Exception as e:
@@ -127,6 +144,10 @@ class SerialSensorStream:
         serial_data = {}
         if self.serial_conn and self.serial_conn.is_open:
             serial_data = self._read_serial()
+            if serial_data:
+                logger.debug(f"Serial data: {serial_data}")
+        else:
+            logger.debug("Serial not connected — using neutral values")
 
         # Get dummy data (if any sensor uses it)
         dummy_data = {}
@@ -139,7 +160,9 @@ class SerialSensorStream:
         # ---- Heart Rate ----
         src = SENSOR_SOURCES.get("heart_rate", "DUMMY")
         if src == "SERIAL":
-            reading["heart_rate"] = serial_data.get("heart_rate", NEUTRAL_VALUES["heart_rate"])
+            hr = serial_data.get("heart_rate", 0)
+            # If ESP32 sends 0 (calibrating/no signal), use neutral
+            reading["heart_rate"] = hr if hr > 0 else NEUTRAL_VALUES["heart_rate"]
         elif src == "DUMMY":
             reading["heart_rate"] = dummy_data.get("heart_rate", NEUTRAL_VALUES["heart_rate"])
         else:  # NEUTRAL
@@ -157,7 +180,12 @@ class SerialSensorStream:
         # ---- HRV ----
         src = SENSOR_SOURCES.get("hrv", "AUTO")
         if src == "AUTO":
-            reading["hrv"] = self._calculate_hrv(reading["heart_rate"])
+            # Prefer ESP32-calculated HRV (from R-R intervals), fallback to Python calc
+            esp32_hrv = serial_data.get("hrv", 0)
+            if esp32_hrv and esp32_hrv > 0:
+                reading["hrv"] = esp32_hrv
+            else:
+                reading["hrv"] = self._calculate_hrv(reading["heart_rate"])
         elif src == "DUMMY":
             reading["hrv"] = dummy_data.get("hrv", NEUTRAL_VALUES["hrv"])
         else:
