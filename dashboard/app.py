@@ -345,6 +345,21 @@ def init_session_state():
         "risk_history": deque(maxlen=60),
         "hr_history": deque(maxlen=60),
         "frame_bytes": None,
+        # ── Session Report Data ──
+        "patient_name": "",
+        "session_start": None,
+        "session_end": None,
+        "session_active": False,
+        "report_ready": False,
+        "report_html": "",
+        "all_risk_history": [],
+        "all_hr_history": [],
+        "emotion_history": [],
+        "audio_triggers": [],
+        "gesture_history": [],
+        "object_history": [],
+        "module_score_sums": {"emotion": 0, "object": 0, "audio": 0, "stress": 0, "gesture": 0},
+        "cycle_count": 0,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -554,6 +569,26 @@ def run_detection_cycle():
     st.session_state.hr_history.append(st.session_state.heart_rate)
 
     now = datetime.now().strftime("%H:%M:%S")
+
+    # ── Collect session data for report ──
+    if st.session_state.session_active:
+        st.session_state.all_risk_history.append(st.session_state.overall_risk)
+        st.session_state.all_hr_history.append(st.session_state.heart_rate)
+        st.session_state.emotion_history.append(st.session_state.dominant_emotion)
+        st.session_state.cycle_count += 1
+        st.session_state.module_score_sums["emotion"] += st.session_state.emotion_score
+        st.session_state.module_score_sums["object"] += st.session_state.object_score
+        st.session_state.module_score_sums["audio"] += st.session_state.audio_score
+        st.session_state.module_score_sums["stress"] += st.session_state.stress_score
+        st.session_state.module_score_sums["gesture"] += st.session_state.gesture_score
+        for s in st.session_state.detected_sounds:
+            st.session_state.audio_triggers.append({"time": now, "name": s})
+        for g in st.session_state.detected_gestures:
+            st.session_state.gesture_history.append(g)
+        for o in st.session_state.detected_objects:
+            st.session_state.object_history.append(o)
+
+
     if st.session_state.overall_risk > 50:
         st.session_state.trigger_log.appendleft({
             "type": "risk",
@@ -610,18 +645,116 @@ with col_controls:
     with c1:
         if st.button("▶  Start", type="primary", width="stretch"):
             st.session_state.running = True
+            if not st.session_state.session_active:
+                st.session_state.session_active = True
+                st.session_state.session_start = datetime.now()
+                st.session_state.report_ready = False
+                st.session_state.report_html = ""
+                st.session_state.all_risk_history = []
+                st.session_state.all_hr_history = []
+                st.session_state.emotion_history = []
+                st.session_state.audio_triggers = []
+                st.session_state.gesture_history = []
+                st.session_state.object_history = []
+                st.session_state.module_score_sums = {"emotion": 0, "object": 0, "audio": 0, "stress": 0, "gesture": 0}
+                st.session_state.cycle_count = 0
     with c2:
         if st.button("■  Stop", width="stretch"):
             st.session_state.running = False
+            if st.session_state.session_active and st.session_state.cycle_count > 0:
+                st.session_state.session_active = False
+                st.session_state.session_end = datetime.now()
+                # Generate report
+                from src.report.generator import generate_report
+                n = st.session_state.cycle_count or 1
+                st.session_state.report_html = generate_report({
+                    "patient_name": st.session_state.patient_name or "Patient",
+                    "session_start": st.session_state.session_start,
+                    "session_end": st.session_state.session_end,
+                    "risk_history": st.session_state.all_risk_history,
+                    "hr_history": st.session_state.all_hr_history,
+                    "emotion_history": st.session_state.emotion_history,
+                    "audio_triggers": st.session_state.audio_triggers,
+                    "gesture_history": st.session_state.gesture_history,
+                    "object_history": st.session_state.object_history,
+                    "trigger_log": list(st.session_state.trigger_log),
+                    "module_scores": {k: v / n for k, v in st.session_state.module_score_sums.items()},
+                })
+                st.session_state.report_ready = True
+            elif st.session_state.session_active:
+                st.session_state.session_active = False
     with c3:
         if st.button("↺  Reset", width="stretch"):
             st.session_state.running = False
+            st.session_state.session_active = False
+            st.session_state.report_ready = False
             st.session_state.overall_risk = 0.0
             st.session_state.risk_level = "LOW"
             st.session_state.risk_history.clear()
             st.session_state.hr_history.clear()
             st.session_state.trigger_log.clear()
             st.session_state.frame_bytes = None
+
+# ── Patient Name & Session Timer ──
+p_col, t_col = st.columns([3, 5])
+with p_col:
+    st.session_state.patient_name = st.text_input(
+        "Patient Name", value=st.session_state.patient_name,
+        placeholder="Enter patient name...", label_visibility="collapsed"
+    )
+with t_col:
+    if st.session_state.session_active and st.session_state.session_start:
+        elapsed = datetime.now() - st.session_state.session_start
+        mins_e = int(elapsed.total_seconds() // 60)
+        secs_e = int(elapsed.total_seconds() % 60)
+        st.markdown(f"""
+        <div style="padding:8px 16px;background:#0f172a;border:1px solid #1e2130;border-radius:8px;
+                    font-family:'DM Mono',monospace;font-size:14px;display:inline-block">
+            🟢 Session Active &nbsp;·&nbsp;
+            <span style="color:#38bdf8">{st.session_state.patient_name or 'Patient'}</span>
+            &nbsp;·&nbsp; <span style="color:#22c55e">{mins_e:02d}:{secs_e:02d}</span>
+            &nbsp;·&nbsp; <span style="color:#64748b">{st.session_state.cycle_count} readings</span>
+        </div>""", unsafe_allow_html=True)
+    elif st.session_state.report_ready:
+        st.markdown("""
+        <div style="padding:8px 16px;background:#0f172a;border:1px solid #334155;border-radius:8px;
+                    font-size:14px;display:inline-block">
+            ⬇️ Session ended — <strong style="color:#38bdf8">report ready for download</strong>
+        </div>""", unsafe_allow_html=True)
+
+# ── Session Report Download ──
+if st.session_state.report_ready and st.session_state.report_html:
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    rpt_col1, rpt_col2, rpt_col3 = st.columns([3, 2, 3])
+    with rpt_col1:
+        dur = st.session_state.session_end - st.session_state.session_start
+        m = int(dur.total_seconds() // 60)
+        s = int(dur.total_seconds() % 60)
+        avg_r = sum(st.session_state.all_risk_history) / len(st.session_state.all_risk_history) if st.session_state.all_risk_history else 0
+        st.markdown(f"""
+        <div style="padding:16px;background:linear-gradient(135deg,#1e293b,#0f172a);
+                    border:1px solid #334155;border-radius:12px">
+            <div style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">
+                📄 Session Report</div>
+            <div style="font-size:14px;color:#e2e8f0;line-height:1.8">
+                <strong>{st.session_state.patient_name or 'Patient'}</strong><br>
+                Duration: <code style="color:#38bdf8">{m}m {s}s</code> &nbsp;·&nbsp;
+                Readings: <code style="color:#38bdf8">{st.session_state.cycle_count}</code><br>
+                Avg Risk: <code style="color:{'#22c55e' if avg_r < 30 else '#f59e0b' if avg_r < 60 else '#ef4444'}">{avg_r:.0f}%</code>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with rpt_col2:
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        fname = f"PTSD_Report_{st.session_state.patient_name or 'Patient'}_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+        st.download_button(
+            label="📥  Download Report",
+            data=st.session_state.report_html,
+            file_name=fname,
+            mime="text/html",
+            type="primary",
+            use_container_width=True,
+        )
 
 # ── Alert Banner ──
 rl = st.session_state.risk_level
